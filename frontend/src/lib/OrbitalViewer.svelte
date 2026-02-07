@@ -1,5 +1,5 @@
 <script>
-  import { Canvas } from '@threlte/core';
+  import { Canvas, T } from '@threlte/core';
   import { OrbitControls } from '@threlte/extras';
   import OrbitalMesh from './OrbitalMesh.svelte';
   import MoleculeAtoms from './MoleculeAtoms.svelte';
@@ -125,12 +125,14 @@
   
   <div class="canvas-container">
     <Canvas>
-      <OrbitControls enableDamping enablePan enableZoom />
+      <T.PerspectiveCamera makeDefault position={[10, 10, 10]} fov={50}>
+        <OrbitControls enableDamping enablePan enableZoom />
+      </T.PerspectiveCamera>
       
       <!-- Lighting -->
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[10, 10, 10]} intensity={1} />
-      <directionalLight position={[-10, -10, -10]} intensity={0.5} />
+      <T.AmbientLight intensity={0.5} />
+      <T.DirectionalLight position={[10, 10, 10]} intensity={1} />
+      <T.DirectionalLight position={[-10, -10, -10]} intensity={0.5} />
       
       <!-- Molecule atoms -->
       {#if moleculeInfo}
