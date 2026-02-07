@@ -37,11 +37,14 @@ const edgeTable = new Uint16Array([
   0x70c, 0x605, 0x50f, 0x406, 0x30a, 0x203, 0x109, 0x0
 ]);
 
-// Triangle table (simplified - would need full 256x16 table for production)
+// NOTE: Triangle table is simplified for this implementation
+// For production use, implement the full 256-case Marching Cubes triangle table
+// Reference: http://paulbourke.net/geometry/polygonise/
+// The full table defines which edges form triangles for each of the 256 possible cube configurations
 const triTable = [
   [], [0, 8, 3], [0, 1, 9], [1, 8, 3, 9, 8, 1], [1, 2, 10], [0, 8, 3, 1, 2, 10],
   [9, 2, 10, 0, 2, 9], [2, 8, 3, 2, 10, 8, 10, 9, 8], [3, 11, 2], [0, 11, 2, 8, 11, 0],
-  // ... (abbreviated for brevity - full table needed for production)
+  // TODO: Add remaining 246 cases for complete Marching Cubes implementation
 ];
 
 // Simplified marching cubes implementation

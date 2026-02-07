@@ -1,6 +1,7 @@
 <script>
   import { Canvas, T } from '@threlte/core';
   import { OrbitControls } from '@threlte/extras';
+  import { onMount } from 'svelte';
   import OrbitalMesh from './OrbitalMesh.svelte';
   import MoleculeAtoms from './MoleculeAtoms.svelte';
   
@@ -12,6 +13,13 @@
   let loading = false;
   let moleculeInfo = null;
   let orbitalData = null;
+  let prevOrbitalIndex = -1;
+  let prevGridSize = -1;
+  
+  onMount(() => {
+    fetchMoleculeInfo();
+    fetchOrbitalData();
+  });
   
   async function fetchMoleculeInfo() {
     try {
@@ -58,6 +66,9 @@
           max: [maxX, maxY, maxZ]
         }
       };
+      
+      prevOrbitalIndex = orbitalIndex;
+      prevGridSize = gridSize;
     } catch (error) {
       console.error('Failed to fetch orbital data:', error);
     } finally {
@@ -66,13 +77,10 @@
   }
   
   $: {
-    if (orbitalIndex !== undefined || gridSize !== undefined) {
+    if ((orbitalIndex !== prevOrbitalIndex || gridSize !== prevGridSize) && 
+        moleculeInfo !== null) {
       fetchOrbitalData();
     }
-  }
-  
-  $: {
-    fetchMoleculeInfo();
   }
 </script>
 

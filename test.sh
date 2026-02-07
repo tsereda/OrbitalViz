@@ -41,7 +41,14 @@ else
 fi
 
 # Cleanup backend
-kill $BACKEND_PID
+kill $BACKEND_PID 2>/dev/null || true
+sleep 2
+
+# Force kill if still running
+if kill -0 $BACKEND_PID 2>/dev/null; then
+    kill -9 $BACKEND_PID 2>/dev/null || true
+fi
+
 wait $BACKEND_PID 2>/dev/null || true
 
 # Test 3: Frontend build

@@ -39,26 +39,16 @@
     geometry.computeBoundingSphere();
   }
   
-  $: if (worker && gridData && gridSize && bounds && isovalue) {
+  $: if (worker && gridData && gridSize && bounds && isovalue !== undefined) {
     worker.postMessage({ gridData, gridSize, bounds, isovalue });
   }
 </script>
 
 {#if geometry}
+  <!-- Positive isovalue surface (blue) -->
   <T.Mesh {geometry}>
     <T.MeshPhongMaterial
       color="#4a9eff"
-      transparent
-      opacity={0.8}
-      side={THREE.DoubleSide}
-      shininess={100}
-      specular="#ffffff"
-    />
-  </T.Mesh>
-  
-  <T.Mesh {geometry}>
-    <T.MeshPhongMaterial
-      color="#ff4a4a"
       transparent
       opacity={0.8}
       side={THREE.DoubleSide}
