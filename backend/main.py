@@ -126,7 +126,7 @@ async def get_molecule_info():
     
     return {
         "atoms": [
-            {"element": atom[0], "coords": atom[1].tolist()}
+            {"element": atom[0], "coords": atom[1].tolist() if hasattr(atom[1], 'tolist') else list(atom[1])}
             for atom in mol._atom
         ],
         "num_orbitals": mc.mo_coeff.shape[1],
