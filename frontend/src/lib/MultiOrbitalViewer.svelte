@@ -202,7 +202,7 @@
     try {
       const res = await fetch(`${apiUrl}/api/molecule/details?molecule=${selectedMolecule}`);
       detailsData = await res.json();
-      detailsExpandedSections = { geom: true, elec: true, basis: false, energy: true, casscf: true, orbitals: false };
+      detailsExpandedSections = { geom: true, elec: true, basis: true, energy: true, casscf: true, orbitals: true };
     } catch (e) {
       console.error('Failed to fetch details:', e);
     }
