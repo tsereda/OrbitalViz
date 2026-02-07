@@ -4,6 +4,7 @@ from pyscf import gto, mcscf
 import numpy as np
 from typing import Optional
 import struct
+import itertools
 
 app = FastAPI(title="PySCF MCSCF Orbital Visualization API")
 
@@ -72,10 +73,13 @@ def get_mcscf_results(molecule_id: str = "water"):
         natorb_coeff, ci, natorb_occ = mcscf.casci.cas_natorb(mc)
         _cached_mcscf[molecule_id] = {
             "mol": mol,
+            "mf": mf,
             "mc": mc,
             "natorbs": natorb_coeff,
             "occupations": natorb_occ,
             "energy": float(mc.e_tot),
+            "rhf_energy": float(mf.e_tot),
+            "preset": preset,
         }
     return _cached_mcscf[molecule_id]
 
@@ -284,6 +288,152 @@ async def get_molecule_info(molecule: str = "water"):
         "occupations": results["occupations"].tolist(),
         "orbital_labels": orbital_labels,
         "energy": results["energy"],
+    }
+
+
+@app.get("/api/molecule/details")
+async def get_molecule_details(molecule: str = "water"):
+    """Get comprehensive details about the molecule, basis set, and CASSCF calculation."""
+    results = get_mcscf_results(molecule)
+    mol = results["mol"]
+    mc = results["mc"]
+    mf = results["mf"]
+    preset = results["preset"]
+    natorbs = results["natorbs"]
+    occupations = results["occupations"]
+
+    # ── Geometry ──
+    coords_bohr = mol.atom_coords()
+    coords_ang = mol.atom_coords(unit='ANG')
+    atoms = []
+    for i in range(mol.natm):
+        atoms.append({
+            "index": i,
+            "element": mol.atom_symbol(i),
+            "nuclear_charge": int(mol.atom_charge(i)),
+            "coords_bohr": [round(float(x), 6) for x in coords_bohr[i]],
+            "coords_angstrom": [round(float(x), 6) for x in coords_ang[i]],
+            "mass": round(float(mol.atom_mass_list()[i]), 4),
+        })
+
+    # ── Bond lengths (all pairs) ──
+    bond_lengths = []
+    for i, j in itertools.combinations(range(mol.natm), 2):
+        dist_bohr = float(np.linalg.norm(coords_bohr[i] - coords_bohr[j]))
+        dist_ang = float(np.linalg.norm(coords_ang[i] - coords_ang[j]))
+        bond_lengths.append({
+            "atom_i": i, "atom_j": j,
+            "label": f"{mol.atom_symbol(i)}{i+1}\u2013{mol.atom_symbol(j)}{j+1}",
+            "distance_bohr": round(dist_bohr, 6),
+            "distance_angstrom": round(dist_ang, 6),
+        })
+
+    # ── Bond angles (for 3+ atoms, only short bonds) ──
+    bond_angles = []
+    if mol.natm >= 3:
+        for j in range(mol.natm):
+            others = [k for k in range(mol.natm) if k != j]
+            for i_idx, k_idx in itertools.combinations(others, 2):
+                v1 = coords_ang[i_idx] - coords_ang[j]
+                v2 = coords_ang[k_idx] - coords_ang[j]
+                n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
+                if n1 > 3.0 or n2 > 3.0:
+                    continue
+                cos_a = np.clip(np.dot(v1, v2) / (n1 * n2 + 1e-15), -1, 1)
+                bond_angles.append({
+                    "atoms": [i_idx, j, k_idx],
+                    "label": f"{mol.atom_symbol(i_idx)}{i_idx+1}\u2013{mol.atom_symbol(j)}{j+1}\u2013{mol.atom_symbol(k_idx)}{k_idx+1}",
+                    "angle_degrees": round(float(np.degrees(np.arccos(cos_a))), 2),
+                })
+
+    # ── Basis set details ──
+    ao_labels_raw = mol.ao_labels(fmt=False)
+    ao_labels_str = mol.ao_labels()
+    shells_by_atom = {}
+    for atom_idx, element, orb_type, m_label in ao_labels_raw:
+        key = f"{element}{atom_idx+1}"
+        if key not in shells_by_atom:
+            shells_by_atom[key] = set()
+        shells_by_atom[key].add(orb_type)
+    shells_summary = {k: sorted(v) for k, v in shells_by_atom.items()}
+
+    basis_info = {
+        "name": mol.basis if isinstance(mol.basis, str) else str(mol.basis),
+        "num_ao": int(mol.nao_nr()),
+        "num_shells": int(mol.nbas),
+        "ao_labels": ao_labels_str,
+        "shells_by_atom": shells_summary,
+        "spherical": mol.cart is False,
+    }
+
+    # ── Electron info ──
+    nelec_alpha, nelec_beta = mol.nelec
+    electron_info = {
+        "total_electrons": int(mol.nelectron),
+        "alpha_electrons": int(nelec_alpha),
+        "beta_electrons": int(nelec_beta),
+        "spin_multiplicity": int(mol.spin + 1),
+        "two_s": int(mol.spin),
+        "charge": int(mol.charge),
+    }
+
+    # ── Energies ──
+    energies = {
+        "rhf_total": round(float(results["rhf_energy"]), 10),
+        "casscf_total": round(float(results["energy"]), 10),
+        "correlation_energy": round(float(results["energy"]) - float(results["rhf_energy"]), 10),
+    }
+
+    # ── CASSCF details ──
+    casscf_info = {
+        "ncas": preset["ncas"],
+        "nelecas": preset["nelecas"],
+        "active_space_label": f"CAS({preset['nelecas']},{preset['ncas']})",
+        "num_mo": int(natorbs.shape[1]),
+        "converged": bool(mc.converged),
+    }
+
+    # ── Orbital details (top AO contributions per MO) ──
+    orbital_labels = generate_orbital_labels(mol, natorbs, occupations)
+    orbital_details = []
+    for i in range(natorbs.shape[1]):
+        coeffs = natorbs[:, i]
+        weights = coeffs ** 2
+        total_weight = float(np.sum(weights))
+
+        top_indices = np.argsort(-weights)[:6]
+        ao_contributions = []
+        for j in top_indices:
+            j = int(j)
+            if weights[j] / total_weight < 0.01:
+                break
+            ao_contributions.append({
+                "ao_label": ao_labels_str[j].strip(),
+                "coefficient": round(float(coeffs[j]), 6),
+                "weight_percent": round(float(weights[j] / total_weight * 100), 1),
+            })
+
+        orbital_details.append({
+            "index": i,
+            "label": orbital_labels[i],
+            "occupation": round(float(occupations[i]), 6),
+            "ao_contributions": ao_contributions,
+        })
+
+    nuc_repulsion = float(mol.energy_nuc())
+
+    return {
+        "molecule_id": molecule,
+        "molecule_name": preset["name"],
+        "atoms": atoms,
+        "bond_lengths": bond_lengths,
+        "bond_angles": bond_angles,
+        "basis": basis_info,
+        "electrons": electron_info,
+        "energies": energies,
+        "nuclear_repulsion_energy": round(nuc_repulsion, 10),
+        "casscf": casscf_info,
+        "orbitals": orbital_details,
     }
 
 

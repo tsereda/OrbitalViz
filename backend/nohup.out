@@ -1,0 +1,14 @@
+INFO:     Started server process [32674]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:55264 - "GET /api/molecule/details?molecule=water HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55269 - "GET /api/molecules HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55269 - "GET /api/molecule/info?molecule=water HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55269 - "GET /api/orbital/0?grid_size=48&margin=5.0&molecule=water HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55269 - "GET /api/molecule/details?molecule=water HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55273 - "GET /api/molecule/info?molecule=formaldehyde HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55273 - "GET /api/orbital/0?grid_size=48&margin=5.0&molecule=formaldehyde HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55276 - "GET /api/molecule/details?molecule=formaldehyde HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55278 - "GET /api/molecule/info?molecule=nitrogen HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55278 - "GET /api/orbital/0?grid_size=48&margin=5.0&molecule=nitrogen HTTP/1.1" 200 OK
