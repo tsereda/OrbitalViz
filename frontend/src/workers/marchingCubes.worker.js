@@ -445,7 +445,18 @@ workerSelf.onmessage = function (e) {
   const { gridData, gridSize, bounds, isovalue } = e.data;
 
   try {
-    const result = marchingCubes(gridData, gridSize, bounds, isovalue);
+    let result;
+    if (isovalue < 0) {
+      // For negative isosurface, negate the data and use positive isovalue
+      // This extracts the surface where the orbital value equals the negative isovalue
+      const negatedData = new Float32Array(gridData.length);
+      for (let i = 0; i < gridData.length; i++) {
+        negatedData[i] = -gridData[i];
+      }
+      result = marchingCubes(negatedData, gridSize, bounds, -isovalue);
+    } else {
+      result = marchingCubes(gridData, gridSize, bounds, isovalue);
+    }
     workerSelf.postMessage(
       { success: true, vertices: result.vertices, normals: result.normals },
       [result.vertices.buffer, result.normals.buffer]

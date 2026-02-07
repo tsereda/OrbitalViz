@@ -8,49 +8,74 @@
   export let gridSize;
   export let bounds;
   export let isovalue;
+  export let positiveColor = '#4a9eff';
+  export let negativeColor = '#ff4a4a';
+  export let opacity = 0.7;
   
-  let geometry = null;
-  let worker = null;
+  let positiveGeometry = null;
+  let negativeGeometry = null;
+  let posWorker = null;
+  let negWorker = null;
   
   onMount(() => {
-    worker = new MarchingCubesWorker();
-    worker.onmessage = (e) => {
+    posWorker = new MarchingCubesWorker();
+    negWorker = new MarchingCubesWorker();
+    
+    posWorker.onmessage = (e) => {
       if (e.data.success) {
-        updateGeometry(e.data.vertices, e.data.normals);
-      } else {
-        console.error('Worker error:', e.data.error);
+        if (positiveGeometry) positiveGeometry.dispose();
+        positiveGeometry = new THREE.BufferGeometry();
+        positiveGeometry.setAttribute('position', new THREE.BufferAttribute(e.data.vertices, 3));
+        positiveGeometry.setAttribute('normal', new THREE.BufferAttribute(e.data.normals, 3));
+        positiveGeometry.computeBoundingSphere();
+      }
+    };
+    
+    negWorker.onmessage = (e) => {
+      if (e.data.success) {
+        if (negativeGeometry) negativeGeometry.dispose();
+        negativeGeometry = new THREE.BufferGeometry();
+        negativeGeometry.setAttribute('position', new THREE.BufferAttribute(e.data.vertices, 3));
+        negativeGeometry.setAttribute('normal', new THREE.BufferAttribute(e.data.normals, 3));
+        negativeGeometry.computeBoundingSphere();
       }
     };
     
     return () => {
-      if (worker) worker.terminate();
-      if (geometry) geometry.dispose();
+      if (posWorker) posWorker.terminate();
+      if (negWorker) negWorker.terminate();
+      if (positiveGeometry) positiveGeometry.dispose();
+      if (negativeGeometry) negativeGeometry.dispose();
     };
   });
   
-  function updateGeometry(vertices, normals) {
-    if (geometry) {
-      geometry.dispose();
-    }
-    
-    geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-    geometry.computeBoundingSphere();
-  }
-  
-  $: if (worker && gridData && gridSize && bounds && isovalue !== undefined) {
-    worker.postMessage({ gridData, gridSize, bounds, isovalue });
+  $: if (posWorker && negWorker && gridData && gridSize && bounds && isovalue !== undefined) {
+    // Positive lobe
+    posWorker.postMessage({ gridData, gridSize, bounds, isovalue: isovalue });
+    // Negative lobe
+    negWorker.postMessage({ gridData, gridSize, bounds, isovalue: -isovalue });
   }
 </script>
 
-{#if geometry}
-  <!-- Positive isovalue surface (blue) -->
-  <T.Mesh {geometry}>
+{#if positiveGeometry}
+  <T.Mesh geometry={positiveGeometry}>
     <T.MeshPhongMaterial
-      color="#4a9eff"
+      color={positiveColor}
       transparent
-      opacity={0.8}
+      {opacity}
+      side={THREE.DoubleSide}
+      shininess={100}
+      specular="#ffffff"
+    />
+  </T.Mesh>
+{/if}
+
+{#if negativeGeometry}
+  <T.Mesh geometry={negativeGeometry}>
+    <T.MeshPhongMaterial
+      color={negativeColor}
+      transparent
+      {opacity}
       side={THREE.DoubleSide}
       shininess={100}
       specular="#ffffff"
