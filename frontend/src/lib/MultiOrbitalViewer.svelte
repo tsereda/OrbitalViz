@@ -299,6 +299,7 @@
           minDistance={5}
           maxDistance={300}
           enableRotate
+          oncreate={(ref) => { ref.listenToKeyEvents(window); }}
         />
       </T.PerspectiveCamera>
 
