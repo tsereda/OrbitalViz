@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: backend
-        image: orbitalviz-backend:latest
+        image: gitlab-registry.nrp-nautilus.io/timothy.sereda/ov/backend:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
