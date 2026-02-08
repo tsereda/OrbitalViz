@@ -52,6 +52,13 @@
       const res = await fetch(`${apiUrl}/api/molecules`);
       if (res.ok) {
         molecules = await res.json();
+        // Auto-load all orbitals for the default molecule on startup
+        await fetchMoleculeInfo();
+        if (moleculeInfo) {
+          selectedSet = new Set(Array.from({ length: moleculeInfo.num_orbitals }, (_, i) => i));
+          pendingSelectedSet = new Set(selectedSet);
+        }
+        await fetchAllOrbitals();
       } else {
         errorMessage = 'Failed to load molecule list from server.';
       }
