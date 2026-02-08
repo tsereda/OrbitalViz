@@ -83,31 +83,52 @@
     const indices = [...selectedSet].sort((a, b) => a - b);
     computeTotal = indices.length;
     computedCount = 0;
+    computeProgress = `Computing ${indices.length} orbital(s)...`;
 
-    for (let i = 0; i < indices.length; i++) {
-      const idx = indices[i];
-      computedCount = i;
-      computeProgress = `Computing orbital ${i + 1} / ${indices.length}...`;
-      try {
-        const response = await fetch(
-          `${apiUrl}/api/orbital/${idx}?grid_size=${gridSize}&margin=5.0&molecule=${selectedMolecule}`
-        );
+    try {
+      // Use batch endpoint for better performance
+      const indicesStr = indices.join(',');
+      const response = await fetch(
+        `${apiUrl}/api/orbitals/batch?indices=${indicesStr}&grid_size=${gridSize}&margin=5.0&molecule=${selectedMolecule}`
+      );
 
-        if (!response.ok) {
-          console.error(`Failed to fetch orbital ${idx}: ${response.status}`);
-          continue;
-        }
+      if (!response.ok) {
+        throw new Error(`Failed to fetch orbitals: ${response.status}`);
+      }
 
-        const arrayBuffer = await response.arrayBuffer();
-        const headerView = new DataView(arrayBuffer, 0, 36);
-        const gx = headerView.getInt32(0, true);
-        const minX = headerView.getFloat32(12, true);
-        const minY = headerView.getFloat32(16, true);
-        const minZ = headerView.getFloat32(20, true);
-        const maxX = headerView.getFloat32(24, true);
-        const maxY = headerView.getFloat32(28, true);
-        const maxZ = headerView.getFloat32(32, true);
-        const dataView = new Float32Array(arrayBuffer, 36);
+      const arrayBuffer = await response.arrayBuffer();
+      let offset = 0;
+      
+      // Parse header
+      const headerView = new DataView(arrayBuffer);
+      const numOrbitals = headerView.getInt32(offset, true); offset += 4;
+      const gx = headerView.getInt32(offset, true); offset += 4;
+      const gy = headerView.getInt32(offset, true); offset += 4;
+      const gz = headerView.getInt32(offset, true); offset += 4;
+      
+      // Read orbital indices
+      const orbitalIndices = [];
+      for (let i = 0; i < numOrbitals; i++) {
+        orbitalIndices.push(headerView.getInt32(offset, true));
+        offset += 4;
+      }
+      
+      // Read bounds
+      const minX = headerView.getFloat32(offset, true); offset += 4;
+      const minY = headerView.getFloat32(offset, true); offset += 4;
+      const minZ = headerView.getFloat32(offset, true); offset += 4;
+      const maxX = headerView.getFloat32(offset, true); offset += 4;
+      const maxY = headerView.getFloat32(offset, true); offset += 4;
+      const maxZ = headerView.getFloat32(offset, true); offset += 4;
+      
+      // Read orbital data
+      const gridDataSize = gx * gy * gz;
+      const newOrbitals = [];
+      
+      for (let i = 0; i < numOrbitals; i++) {
+        const idx = orbitalIndices[i];
+        const dataView = new Float32Array(arrayBuffer, offset, gridDataSize);
+        offset += gridDataSize * 4; // 4 bytes per float32
 
         const colors = orbitalColorPairs[i % orbitalColorPairs.length];
         const occ = moleculeInfo?.occupations?.[idx];
@@ -115,7 +136,7 @@
         const backendLabel = moleculeInfo?.orbital_labels?.[idx];
         const displayLabel = backendLabel ? `${backendLabel}${occStr}` : `MO ${idx + 1}${occStr}`;
 
-        orbitals = [...orbitals, {
+        newOrbitals.push({
           index: idx,
           gridSize: gx,
           gridData: dataView,
@@ -124,11 +145,17 @@
           positiveColor: colors.pos,
           negativeColor: colors.neg,
           label: displayLabel,
-        }];
-      } catch (e) {
-        console.error(`Failed to fetch orbital ${idx}:`, e);
+        });
+        
+        computedCount = i + 1;
       }
+      
+      orbitals = newOrbitals;
+    } catch (e) {
+      console.error('Failed to fetch orbitals:', e);
+      errorMessage = `Failed to fetch orbitals: ${e.message}`;
     }
+    
     computedCount = indices.length;
     computeProgress = '';
     loading = false;
@@ -264,8 +291,8 @@
     <h1>OrbitalViz</h1>
     {#if loading}
       <div class="loading-status">
-        <span class="loading-dot"></span>
-        <span class="loading-text">{computeProgress || 'Loading...'}</span>
+        <div class="header-spinner"></div>
+        <span class="loading-text">Loading...</span>
       </div>
     {/if}
     <div class="top-actions">
@@ -281,6 +308,22 @@
     <div class="current-molecule-bar">
       <span class="current-mol-name">{molecules.find(m => m.id === selectedMolecule)?.name || selectedMolecule}</span>
       <span class="current-mol-meta">{selectedSet.size} orbital{selectedSet.size !== 1 ? 's' : ''} &middot; grid {gridSize}</span>
+    </div>
+  {/if}
+
+  <!-- Loading overlay -->
+  {#if loading}
+    <div class="loading-overlay">
+      <div class="loading-card">
+        <div class="spinner"></div>
+        <div class="loading-message">{computeProgress || 'Loading orbitals...'}</div>
+        {#if computeTotal > 0}
+          <div class="progress-bar">
+            <div class="progress-fill" style="width: {(computedCount / computeTotal) * 100}%"></div>
+          </div>
+          <div class="progress-text">{computedCount} / {computeTotal} orbitals</div>
+        {/if}
+      </div>
     </div>
   {/if}
 
@@ -750,6 +793,102 @@
   @keyframes pulse {
     0%, 100% { opacity: 0.3; }
     50% { opacity: 1; }
+  }
+
+  /* ── Loading overlay ── */
+  .loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .loading-card {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 16px;
+    padding: 2rem 2.5rem;
+    min-width: 280px;
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    animation: slideUp 0.3s ease-out;
+  }
+
+  @keyframes slideUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid #333;
+    border-top-color: #4a9eff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 1.5rem;
+  }
+
+  .header-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid #333;
+    border-top-color: #4a9eff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .loading-message {
+    font-size: 1rem;
+    color: #ddd;
+    font-weight: 500;
+    margin-bottom: 1.2rem;
+  }
+
+  .progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #333;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 0.6rem;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4a9eff, #44cc88);
+    border-radius: 4px;
+    transition: width 0.3s ease-out;
+  }
+
+  .progress-text {
+    font-size: 0.85rem;
+    color: #888;
+    font-family: 'SF Mono', 'Menlo', monospace;
   }
 
   /* ── Compute panel molecule select ── */
