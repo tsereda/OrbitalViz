@@ -48,12 +48,16 @@
   const gridSpacing = 26;
 
   onMount(async () => {
-    await fetchMolecules();
-    await fetchMoleculeInfo();
-    await fetchAllOrbitals();
-    pendingMolecule = selectedMolecule;
-    pendingGridSize = gridSize;
-    pendingSelectedSet = new Set(selectedSet);
+    try {
+      const res = await fetch(`${apiUrl}/api/molecules`);
+      if (res.ok) {
+        molecules = await res.json();
+      } else {
+        errorMessage = 'Failed to load molecule list from server.';
+      }
+    } catch (e) {
+      errorMessage = 'Cannot connect to compute server. Please try refreshing.';
+    }
   });
 
   async function fetchMolecules() {
@@ -292,7 +296,7 @@
     {#if loading}
       <div class="loading-status">
         <div class="header-spinner"></div>
-        <span class="loading-text">Loading...</span>
+        <span class="loading-text">Computing...</span>
       </div>
     {/if}
     <div class="top-actions">
@@ -311,12 +315,12 @@
     </div>
   {/if}
 
-  <!-- Loading overlay -->
+  <!-- Loading overlay (computation in progress) -->
   {#if loading}
     <div class="loading-overlay">
       <div class="loading-card">
         <div class="spinner"></div>
-        <div class="loading-message">{computeProgress || 'Loading orbitals...'}</div>
+        <div class="loading-message">{computeProgress || 'Computing...'}</div>
         {#if computeTotal > 0}
           <div class="progress-bar">
             <div class="progress-fill" style="width: {(computedCount / computeTotal) * 100}%"></div>
@@ -889,6 +893,54 @@
     font-size: 0.85rem;
     color: #888;
     font-family: 'SF Mono', 'Menlo', monospace;
+  }
+
+  .progress-fill-pulse {
+    animation: pulse-fill 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-fill {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 1; }
+  }
+
+  .init-error {
+    color: #ff6644;
+    font-size: 0.9rem;
+    margin-top: 1rem;
+  }
+
+  /* ── Welcome / empty state overlay ── */
+  .welcome-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .welcome-card {
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 18px;
+    padding: 2rem 1.5rem;
+    max-width: 340px;
+    width: 90%;
+    text-align: center;
+  }
+  .welcome-card h2 {
+    margin: 0 0 0.75rem;
+    font-size: 1.3rem;
+    color: #fff;
+  }
+  .welcome-card p {
+    color: #aaa;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    margin: 0 0 1.25rem;
   }
 
   /* ── Compute panel molecule select ── */

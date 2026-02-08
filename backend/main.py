@@ -97,7 +97,7 @@ _cached_mcscf: dict = {}
 
 
 def get_mcscf_results(molecule_id: str = "water"):
-    """Get cached MCSCF results for a given molecule preset"""
+    """Get cached MCSCF results for a given molecule preset."""
     if molecule_id not in _cached_mcscf:
         preset = MOLECULE_PRESETS.get(molecule_id)
         if preset is None:
@@ -232,6 +232,11 @@ def generate_orbital_labels(mol, mo_coeffs, occupations):
     return labels
 
 
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
+
+
 @app.get("/")
 async def root():
     return {"message": "PySCF MCSCF Orbital Visualization API"}
@@ -239,7 +244,7 @@ async def root():
 
 @app.get("/api/molecules")
 async def list_molecules():
-    """List all available molecule presets"""
+    """List all available molecule presets."""
     return [
         {"id": mid, "name": preset["name"]}
         for mid, preset in MOLECULE_PRESETS.items()
@@ -306,7 +311,7 @@ async def get_orbital_data(
 
 @app.get("/api/molecule/info")
 async def get_molecule_info(molecule: str = "water"):
-    """Get information about the molecule"""
+    """Get information about the molecule."""
     results = get_mcscf_results(molecule)
     mol = results["mol"]
     
