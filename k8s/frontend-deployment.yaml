@@ -17,6 +17,7 @@ spec:
       containers:
       - name: frontend
         image: orbitalviz-frontend:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 80
           name: http
