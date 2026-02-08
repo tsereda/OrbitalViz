@@ -3,9 +3,12 @@ kind: Ingress
 metadata:
   name: orbitalviz-ingress
   annotations:
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    kubernetes.io/ingress.class: haproxy
 spec:
-  ingressClassName: nginx
+  tls:
+  - hosts:
+    - orbitalviz.nrp-nautilus.io
+    secretName: orbitalviz-tls
   rules:
   - host: orbitalviz.nrp-nautilus.io
     http:
@@ -24,6 +27,3 @@ spec:
             name: orbitalviz-frontend
             port:
               number: 80
-  tls:
-  - hosts:
-    - orbitalviz.nrp-nautilus.io
