@@ -22,6 +22,13 @@
   let detailsData = null;
   let detailsLoading = false;
   let detailsExpandedSections = {};
+  let computeOpen = false;
+  let pendingMolecule = 'water';
+  let pendingGridSize = 48;
+  let pendingSelectedSet = new Set([0]);
+  let computeProgress = '';
+  let computedCount = 0;
+  let computeTotal = 0;
 
   const orbitalColorPairs = [
     { pos: '#4a9eff', neg: '#ff6644' },
@@ -38,12 +45,15 @@
     { pos: '#0088ff', neg: '#ff4400' },  // Bright Blue / Orange-Red
   ];
 
-  const gridSpacing = 14;
+  const gridSpacing = 26;
 
   onMount(async () => {
     await fetchMolecules();
     await fetchMoleculeInfo();
     await fetchAllOrbitals();
+    pendingMolecule = selectedMolecule;
+    pendingGridSize = gridSize;
+    pendingSelectedSet = new Set(selectedSet);
   });
 
   async function fetchMolecules() {
@@ -71,9 +81,13 @@
     orbitals = [];
 
     const indices = [...selectedSet].sort((a, b) => a - b);
+    computeTotal = indices.length;
+    computedCount = 0;
 
     for (let i = 0; i < indices.length; i++) {
       const idx = indices[i];
+      computedCount = i;
+      computeProgress = `Computing orbital ${i + 1} / ${indices.length}...`;
       try {
         const response = await fetch(
           `${apiUrl}/api/orbital/${idx}?grid_size=${gridSize}&margin=5.0&molecule=${selectedMolecule}`
@@ -115,12 +129,14 @@
         console.error(`Failed to fetch orbital ${idx}:`, e);
       }
     }
+    computedCount = indices.length;
+    computeProgress = '';
     loading = false;
   }
 
   function getGridPosition(i) {
     if (displayMode === 'overlay') return [0, 0, 0];
-    const cols = Math.ceil(Math.sqrt(orbitals.length));
+    const cols = Math.ceil(Math.sqrt(orbitals.length * 1.5));
     const row = Math.floor(i / cols);
     const col = i % cols;
     const centerCol = (cols - 1) / 2;
@@ -128,42 +144,61 @@
     const centerRow = (totalRows - 1) / 2;
     return [
       (col - centerCol) * gridSpacing,
+      -(row - centerRow) * gridSpacing,
       0,
-      (row - centerRow) * gridSpacing,
     ];
   }
 
-  function toggleSelected(idx) {
-    if (selectedSet.has(idx)) {
-      selectedSet.delete(idx);
+  function togglePendingSelected(idx) {
+    if (pendingSelectedSet.has(idx)) {
+      pendingSelectedSet.delete(idx);
     } else {
-      selectedSet.add(idx);
+      pendingSelectedSet.add(idx);
     }
-    selectedSet = selectedSet;
-    fetchAllOrbitals();
+    pendingSelectedSet = pendingSelectedSet;
   }
 
-  function selectAll() {
+  function pendingSelectAll() {
     if (!moleculeInfo) return;
-    for (let i = 0; i < moleculeInfo.num_orbitals; i++) selectedSet.add(i);
-    selectedSet = selectedSet;
-    fetchAllOrbitals();
+    for (let i = 0; i < moleculeInfo.num_orbitals; i++) pendingSelectedSet.add(i);
+    pendingSelectedSet = pendingSelectedSet;
   }
 
-  function selectNone() {
-    selectedSet = new Set();
-    fetchAllOrbitals();
+  function pendingSelectNone() {
+    pendingSelectedSet = new Set();
+    pendingSelectedSet = pendingSelectedSet;
   }
 
-  function toggleGroup(indices) {
-    const allSelected = indices.every(i => selectedSet.has(i));
+  function togglePendingGroup(indices) {
+    const allSelected = indices.every(i => pendingSelectedSet.has(i));
     if (allSelected) {
-      indices.forEach(i => selectedSet.delete(i));
+      indices.forEach(i => pendingSelectedSet.delete(i));
     } else {
-      indices.forEach(i => selectedSet.add(i));
+      indices.forEach(i => pendingSelectedSet.add(i));
     }
-    selectedSet = selectedSet;
-    fetchAllOrbitals();
+    pendingSelectedSet = pendingSelectedSet;
+  }
+
+  async function runComputation() {
+    selectedMolecule = pendingMolecule;
+    gridSize = pendingGridSize;
+    selectedSet = new Set(pendingSelectedSet);
+    detailsData = null;
+    computeOpen = false;
+    await fetchMoleculeInfo();
+    await fetchAllOrbitals();
+  }
+
+  async function handlePendingMoleculeChange(e) {
+    pendingMolecule = e.target.value;
+    pendingSelectedSet = new Set([0]);
+    // Fetch info for the pending molecule so we can show orbital choices
+    try {
+      const response = await fetch(`${apiUrl}/api/molecule/info?molecule=${pendingMolecule}`);
+      moleculeInfo = await response.json();
+    } catch (error) {
+      console.error('Failed to fetch molecule info:', error);
+    }
   }
 
   // NOTE: reference moleculeInfo directly so Svelte detects the dependency
@@ -183,16 +218,10 @@
     return Object.entries(groups).filter(([, idxs]) => idxs.length > 0);
   })();
 
+  $: pendingCount = pendingSelectedSet.size;
+
   function setDisplayMode(mode) {
     displayMode = mode;
-  }
-
-  async function changeMolecule(e) {
-    selectedMolecule = e.target.value;
-    selectedSet = new Set([0]);
-    detailsData = null;
-    await fetchMoleculeInfo();
-    await fetchAllOrbitals();
   }
 
   function handleRefresh() {
@@ -221,9 +250,11 @@
   function getCameraPosition() {
     if (displayMode === 'overlay') return [12, 12, 12];
     const n = orbitals.length || 4;
-    const cols = Math.ceil(Math.sqrt(n));
-    const dist = Math.max(20, cols * gridSpacing * 0.8);
-    return [dist, dist * 0.7, dist];
+    const cols = Math.ceil(Math.sqrt(n * 1.5));
+    const rows = Math.ceil(n / cols);
+    const spread = Math.max(cols, rows) * gridSpacing;
+    const dist = Math.max(25, spread * 0.9);
+    return [0, 0, dist];
   }
 </script>
 
@@ -232,25 +263,43 @@
   <header class="top-bar">
     <h1>OrbitalViz</h1>
     {#if loading}
-      <span class="loading-dot"></span>
+      <div class="loading-status">
+        <span class="loading-dot"></span>
+        <span class="loading-text">{computeProgress || 'Loading...'}</span>
+      </div>
     {/if}
-    <button class="details-btn" on:click={openDetails} title="Molecule Details">Details</button>
+    <div class="top-actions">
+      <button class="compute-btn" on:click={() => { computeOpen = true; pendingMolecule = selectedMolecule; pendingGridSize = gridSize; pendingSelectedSet = new Set(selectedSet); }} disabled={loading}>
+        Compute
+      </button>
+      <button class="details-btn" on:click={openDetails} title="Molecule Details">Details</button>
+    </div>
   </header>
 
-  <!-- Molecule selector -->
-  <div class="molecule-bar">
-    <select class="molecule-select" value={selectedMolecule} on:change={changeMolecule} disabled={loading}>
-      {#each molecules as mol}
-        <option value={mol.id}>{mol.name}</option>
-      {/each}
-    </select>
-  </div>
+  <!-- Current molecule label -->
+  {#if moleculeInfo}
+    <div class="current-molecule-bar">
+      <span class="current-mol-name">{molecules.find(m => m.id === selectedMolecule)?.name || selectedMolecule}</span>
+      <span class="current-mol-meta">{selectedSet.size} orbital{selectedSet.size !== 1 ? 's' : ''} &middot; grid {gridSize}</span>
+    </div>
+  {/if}
 
   <!-- 3D Canvas -->
   <div class="canvas-area">
     <Canvas>
       <T.PerspectiveCamera makeDefault position={getCameraPosition()} fov={50}>
-        <OrbitControls enableDamping enablePan enableZoom />
+        <OrbitControls
+          enableDamping
+          dampingFactor={0.08}
+          enablePan
+          panSpeed={0.8}
+          enableZoom
+          zoomSpeed={0.8}
+          rotateSpeed={0.5}
+          minDistance={5}
+          maxDistance={300}
+          enableRotate
+        />
       </T.PerspectiveCamera>
 
       <T.AmbientLight intensity={0.5} />
@@ -322,55 +371,6 @@
     <!-- Expanded content -->
     {#if panelOpen}
       <div class="sheet-content">
-        <div class="ctrl-section">
-          <div class="orbitals-header">
-            <h4>Orbitals</h4>
-            <div class="select-actions">
-              <button class="select-btn" on:click={selectAll} disabled={loading}>All</button>
-              <button class="select-btn" on:click={selectNone} disabled={loading}>None</button>
-            </div>
-          </div>
-          <p class="occ-hint">Numbers in parentheses are electron occupation numbers</p>
-          {#if moleculeInfo}
-            {#each orbitalGroups as [groupName, indices]}
-              <div class="orbital-group">
-                <button class="group-header" on:click={() => toggleGroup(indices)} disabled={loading}>
-
-                  <span class="group-name">{groupName}</span>
-                  <span class="group-count">{indices.filter(i => selectedSet.has(i)).length}/{indices.length}</span>
-                </button>
-                <div class="orbital-chips">
-                  {#each indices as idx}
-                    {@const occ = moleculeInfo.occupations?.[idx]}
-                    {@const occStr = occ !== undefined ? ` (${occ.toFixed(3)})` : ''}
-                    {@const backendLabel = moleculeInfo.orbital_labels?.[idx]}
-                    {@const label = backendLabel ? `${backendLabel}${occStr}` : `MO ${idx + 1}${occStr}`}
-                    {@const colors = orbitalColorPairs[idx % orbitalColorPairs.length]}
-                    <button
-                      class="chip"
-                      class:selected={selectedSet.has(idx)}
-                      disabled={loading}
-                      on:click={() => toggleSelected(idx)}
-                    >
-                      <span class="chip-dot" style="background: {colors.pos}"></span>
-                      <span class="chip-label">{label}</span>
-                    </button>
-                  {/each}
-                </div>
-              </div>
-            {/each}
-          {/if}
-        </div>
-
-        <div class="ctrl-section">
-          <h4>Resolution</h4>
-          <div class="res-btns">
-            <button class:active={gridSize === 32} on:click={() => { gridSize = 32; handleRefresh(); }} disabled={loading}>32</button>
-            <button class:active={gridSize === 48} on:click={() => { gridSize = 48; handleRefresh(); }} disabled={loading}>48</button>
-            <button class:active={gridSize === 64} on:click={() => { gridSize = 64; handleRefresh(); }} disabled={loading}>64</button>
-          </div>
-        </div>
-
         {#if moleculeInfo}
           <div class="ctrl-section info-strip">
             <span>{moleculeInfo.basis}</span>
@@ -381,6 +381,87 @@
       </div>
     {/if}
   </div>
+
+  <!-- Computation Panel Modal -->
+  {#if computeOpen}
+    <div class="modal-overlay" on:click|self={() => computeOpen = false} on:keydown={e => e.key === 'Escape' && (computeOpen = false)} role="dialog" aria-modal="true">
+      <div class="modal-panel compute-panel">
+        <div class="modal-header">
+          <h2>Computation Setup</h2>
+          <button class="modal-close" on:click={() => computeOpen = false}>✕</button>
+        </div>
+        <div class="modal-body">
+          <!-- Molecule selection -->
+          <div class="compute-section">
+            <h4>Molecule</h4>
+            <select class="molecule-select" value={pendingMolecule} on:change={handlePendingMoleculeChange}>
+              {#each molecules as mol}
+                <option value={mol.id}>{mol.name}</option>
+              {/each}
+            </select>
+          </div>
+
+          <!-- Resolution -->
+          <div class="compute-section">
+            <h4>Grid Resolution</h4>
+            <div class="res-btns">
+              <button class:active={pendingGridSize === 32} on:click={() => pendingGridSize = 32}>32 <span class="res-sub">Fast</span></button>
+              <button class:active={pendingGridSize === 48} on:click={() => pendingGridSize = 48}>48 <span class="res-sub">Balanced</span></button>
+              <button class:active={pendingGridSize === 64} on:click={() => pendingGridSize = 64}>64 <span class="res-sub">High</span></button>
+            </div>
+          </div>
+
+          <!-- Orbital selection -->
+          <div class="compute-section">
+            <div class="orbitals-header">
+              <h4>Orbitals <span class="pending-count">({pendingCount} selected)</span></h4>
+              <div class="select-actions">
+                <button class="select-btn" on:click={pendingSelectAll}>All</button>
+                <button class="select-btn" on:click={pendingSelectNone}>None</button>
+              </div>
+            </div>
+            <p class="occ-hint">Select which orbitals to compute and visualize</p>
+            {#if moleculeInfo}
+              {#each orbitalGroups as [groupName, indices]}
+                <div class="orbital-group">
+                  <button class="group-header" on:click={() => togglePendingGroup(indices)}>
+                    <span class="group-name">{groupName}</span>
+                    <span class="group-count">{indices.filter(i => pendingSelectedSet.has(i)).length}/{indices.length}</span>
+                  </button>
+                  <div class="orbital-chips">
+                    {#each indices as idx}
+                      {@const occ = moleculeInfo.occupations?.[idx]}
+                      {@const occStr = occ !== undefined ? ` (${occ.toFixed(3)})` : ''}
+                      {@const backendLabel = moleculeInfo.orbital_labels?.[idx]}
+                      {@const label = backendLabel ? `${backendLabel}${occStr}` : `MO ${idx + 1}${occStr}`}
+                      {@const colors = orbitalColorPairs[idx % orbitalColorPairs.length]}
+                      <button
+                        class="chip"
+                        class:selected={pendingSelectedSet.has(idx)}
+                        on:click={() => togglePendingSelected(idx)}
+                      >
+                        <span class="chip-dot" style="background: {colors.pos}"></span>
+                        <span class="chip-label">{label}</span>
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+              {/each}
+            {/if}
+          </div>
+
+          <!-- Run button -->
+          <button class="run-compute-btn" on:click={runComputation} disabled={pendingCount === 0 || loading}>
+            {#if loading}
+              Computing...
+            {:else}
+              Compute {pendingCount} Orbital{pendingCount !== 1 ? 's' : ''}
+            {/if}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <!-- Details Modal -->
   {#if detailsOpen}
@@ -585,6 +666,78 @@
     flex: 1;
   }
 
+  .top-actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+  }
+
+  .loading-status {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .loading-text {
+    font-size: 0.7rem;
+    color: #4a9eff;
+    font-family: 'SF Mono', 'Menlo', monospace;
+    white-space: nowrap;
+  }
+
+  .compute-btn {
+    background: #4a9eff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.4rem 0.75rem;
+    min-height: 36px;
+    font-size: 0.75rem;
+    color: #fff;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .compute-btn:active:not(:disabled) {
+    background: #3a8eef;
+    transform: scale(0.97);
+  }
+
+  .compute-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* ── Current molecule bar ── */
+  .current-molecule-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.35rem 0.75rem;
+    padding-left: calc(0.75rem + env(safe-area-inset-left, 0px));
+    padding-right: calc(0.75rem + env(safe-area-inset-right, 0px));
+    background: #111;
+    border-bottom: 1px solid #1a1a1a;
+    flex-shrink: 0;
+    z-index: 10;
+  }
+
+  .current-mol-name {
+    font-size: 0.82rem;
+    color: #ccc;
+    font-weight: 500;
+  }
+
+  .current-mol-meta {
+    font-size: 0.68rem;
+    color: #555;
+    font-family: 'SF Mono', 'Menlo', monospace;
+  }
+
   .loading-dot {
     width: 8px;
     height: 8px;
@@ -598,17 +751,7 @@
     50% { opacity: 1; }
   }
 
-  /* ── Molecule selector ── */
-  .molecule-bar {
-    padding: 0.4rem 0.75rem;
-    padding-left: calc(0.75rem + env(safe-area-inset-left, 0px));
-    padding-right: calc(0.75rem + env(safe-area-inset-right, 0px));
-    background: #111;
-    border-bottom: 1px solid #1a1a1a;
-    flex-shrink: 0;
-    z-index: 10;
-  }
-
+  /* ── Compute panel molecule select ── */
   .molecule-select {
     width: 100%;
     padding: 0.6rem 0.75rem;
@@ -617,7 +760,7 @@
     color: #fff;
     border: 1px solid #2a2a2a;
     border-radius: 10px;
-    font-size: 16px; /* prevents iOS zoom on focus */
+    font-size: 16px;
     font-family: inherit;
     appearance: none;
     -webkit-appearance: none;
@@ -1385,5 +1528,65 @@
     text-align: right;
   }
 
+  /* ── Compute panel ── */
+  .compute-panel {
+    max-height: 95vh;
+    max-height: 95dvh;
+  }
+
+  .compute-section {
+    margin-bottom: 1rem;
+  }
+
+  .compute-section h4 {
+    margin: 0 0 0.5rem;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #888;
+    font-weight: 500;
+  }
+
+  .pending-count {
+    color: #4a9eff;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  .res-sub {
+    display: block;
+    font-size: 0.6rem;
+    color: #555;
+    font-weight: 400;
+    margin-top: 0.15rem;
+  }
+
+  .run-compute-btn {
+    width: 100%;
+    padding: 0.8rem 1rem;
+    min-height: 48px;
+    background: #4a9eff;
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    margin-top: 0.5rem;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .run-compute-btn:active:not(:disabled) {
+    background: #3a8eef;
+    transform: scale(0.98);
+  }
+
+  .run-compute-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 
 </style>
