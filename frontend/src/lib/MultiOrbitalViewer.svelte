@@ -32,6 +32,10 @@
     { pos: '#ff44aa', neg: '#44aaff' },
     { pos: '#cccc22', neg: '#4466cc' },
     { pos: '#ff8866', neg: '#6688ff' },
+    { pos: '#ff3333', neg: '#3333ff' },  // Red / Blue
+    { pos: '#3366ff', neg: '#ff3366' },  // Blue / Red
+    { pos: '#ff0000', neg: '#0066ff' },  // Pure Red / Deep Blue
+    { pos: '#0088ff', neg: '#ff4400' },  // Bright Blue / Orange-Red
   ];
 
   const gridSpacing = 14;
