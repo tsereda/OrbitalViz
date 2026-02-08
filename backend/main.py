@@ -237,7 +237,7 @@ async def root():
     return {"message": "PySCF MCSCF Orbital Visualization API"}
 
 
-@app.get("/api/molecules")
+@app.get("/molecules")
 async def list_molecules():
     """List all available molecule presets"""
     return [
@@ -246,7 +246,7 @@ async def list_molecules():
     ]
 
 
-@app.get("/api/orbital/{orbital_index}")
+@app.get("/orbital/{orbital_index}")
 async def get_orbital_data(
     orbital_index: int = 0,
     grid_size: int = 64,
@@ -304,7 +304,7 @@ async def get_orbital_data(
     )
 
 
-@app.get("/api/molecule/info")
+@app.get("/molecule/info")
 async def get_molecule_info(molecule: str = "water"):
     """Get information about the molecule"""
     results = get_mcscf_results(molecule)
@@ -327,7 +327,7 @@ async def get_molecule_info(molecule: str = "water"):
     }
 
 
-@app.get("/api/molecule/details")
+@app.get("/molecule/details")
 async def get_molecule_details(molecule: str = "water"):
     """Get comprehensive details about the molecule, basis set, and CASSCF calculation."""
     results = get_mcscf_results(molecule)
@@ -473,7 +473,7 @@ async def get_molecule_details(molecule: str = "water"):
     }
 
 
-@app.get("/api/orbitals/batch")
+@app.get("/orbitals/batch")
 async def get_orbital_batch(
     indices: str = "0,1,2,3",
     grid_size: int = 48,
