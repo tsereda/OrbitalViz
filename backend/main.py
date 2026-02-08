@@ -5,6 +5,10 @@ import numpy as np
 from typing import Optional
 import struct
 import itertools
+import threading
+import logging
+
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="PySCF MCSCF Orbital Visualization API")
 
@@ -94,30 +98,48 @@ MOLECULE_PRESETS = {
 
 # Cache for MCSCF results keyed by molecule id
 _cached_mcscf: dict = {}
+_cache_lock = threading.Lock()
+
+
+def _compute_molecule(molecule_id: str) -> dict:
+    """Run the MCSCF computation for a molecule (no caching logic)."""
+    preset = MOLECULE_PRESETS.get(molecule_id)
+    if preset is None:
+        raise ValueError(f"Unknown molecule: {molecule_id}")
+
+    logger.info(f"Computing MCSCF for {molecule_id}...")
+    mol = gto.M(atom=preset["atom"], basis=preset["basis"], verbose=0)
+    mf = mol.RHF().run()
+    mc = mcscf.CASSCF(mf, preset["ncas"], preset["nelecas"]).run()
+    natorb_coeff, ci, natorb_occ = mcscf.casci.cas_natorb(mc)
+    logger.info(f"MCSCF for {molecule_id} done (E={mc.e_tot:.6f})")
+    return {
+        "mol": mol,
+        "mf": mf,
+        "mc": mc,
+        "natorbs": natorb_coeff,
+        "occupations": natorb_occ,
+        "energy": float(mc.e_tot),
+        "rhf_energy": float(mf.e_tot),
+        "preset": preset,
+    }
 
 
 def get_mcscf_results(molecule_id: str = "water"):
     """Get cached MCSCF results for a given molecule preset."""
-    if molecule_id not in _cached_mcscf:
-        preset = MOLECULE_PRESETS.get(molecule_id)
-        if preset is None:
-            raise ValueError(f"Unknown molecule: {molecule_id}")
-
-        mol = gto.M(atom=preset["atom"], basis=preset["basis"], verbose=0)
-        mf = mol.RHF().run()
-        mc = mcscf.CASSCF(mf, preset["ncas"], preset["nelecas"]).run()
-        natorb_coeff, ci, natorb_occ = mcscf.casci.cas_natorb(mc)
-        _cached_mcscf[molecule_id] = {
-            "mol": mol,
-            "mf": mf,
-            "mc": mc,
-            "natorbs": natorb_coeff,
-            "occupations": natorb_occ,
-            "energy": float(mc.e_tot),
-            "rhf_energy": float(mf.e_tot),
-            "preset": preset,
-        }
+    if molecule_id in _cached_mcscf:
+        return _cached_mcscf[molecule_id]
+    with _cache_lock:
+        # Double-check after acquiring lock
+        if molecule_id not in _cached_mcscf:
+            _cached_mcscf[molecule_id] = _compute_molecule(molecule_id)
     return _cached_mcscf[molecule_id]
+
+
+# Precompute the default molecule at import time so workers are ready
+logger.info("Precomputing default molecule (water)...")
+_cached_mcscf["water"] = _compute_molecule("water")
+logger.info("Precompute done – worker ready.")
 
 
 def get_grid_bounds(mol, margin_angstrom=5.0):
