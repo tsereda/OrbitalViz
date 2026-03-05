@@ -4,6 +4,10 @@ metadata:
   name: orbitalviz-ingress
   annotations:
     kubernetes.io/ingress.class: haproxy
+    haproxy.org/timeout-http-request: "300s"
+    haproxy.org/timeout-connect: "30s"
+    haproxy.org/timeout-server: "300s"
+    haproxy.org/timeout-tunnel: "3600s"
 spec:
   tls:
   - hosts:

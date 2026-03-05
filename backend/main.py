@@ -94,6 +94,27 @@ MOLECULE_PRESETS = {
         "basis": "6-31g",
         "ncas": 2, "nelecas": 2,
     },
+    "ammonia_dimer": {
+        "name": "Ammonia Dimer ((NH₃)₂)",
+        "atom": (
+            "N  0.000  0.000 -1.572;"
+            "H  0.000 -0.937 -1.955;"
+            "H  0.812  0.469 -1.955;"
+            "H -0.812  0.469 -1.955;"
+            "N  0.000  0.000  1.572;"
+            "H  0.000  0.000  0.576;"
+            "H  0.812 -0.469  1.955;"
+            "H -0.812 -0.469  1.955"
+        ),
+        "basis": "6-31g",
+        "ncas": 4, "nelecas": 4,
+    },
+    "nitrogen_nonbonded": {
+        "name": "Two Non-Bonded N Atoms (N···N)",
+        "atom": "N 0.0 0.0 -5.0; N 0.0 0.0 5.0",
+        "basis": "6-31g",
+        "ncas": 6, "nelecas": 6,
+    },
 }
 
 # Cache for MCSCF results keyed by molecule id
