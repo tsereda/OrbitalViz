@@ -1,11 +1,13 @@
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pyscf import gto, mcscf
+from pyscf import gto, mcscf, dft
 import numpy as np
-from typing import Optional
+from typing import Optional, List
+from pydantic import BaseModel
 import struct
 import itertools
 import threading
+import uuid
 import logging
 
 logger = logging.getLogger("uvicorn.error")
@@ -115,33 +117,196 @@ MOLECULE_PRESETS = {
         "basis": "6-31g",
         "ncas": 6, "nelecas": 6,
     },
+    # ── TBI-relevant molecules ─────────────────────────────────────────
+    "hydrogen_peroxide": {
+        "name": "Hydrogen Peroxide (H₂O₂) — ROS model",
+        "atom": "O 0.0 0.0 0.0; O 0.0 0.0 1.452; H 0.965 0.0 -0.325; H -0.965 0.0 1.777",
+        "basis": "6-31g",
+        # O–O bond breaking: active space = bonding + antibonding O–O sigma + lone pair
+        "ncas": 4, "nelecas": 4,
+        "scan_bond": [0, 1],  # O–O bond for default PES scan
+        "tbi_context": "Reactive oxygen species (ROS) generation in TBI; O–O homolysis yields hydroxyl radicals",
+    },
+    "methanethiol": {
+        "name": "Methanethiol (CH₃SH) — Cys S–H model",
+        "atom": "S 0.0 0.0 0.0; C 0.0 0.0 1.819; H -0.697 0.906 -0.361; H 1.337 0.0 -0.213; H 0.0 -1.228 2.197; H -1.028 0.594 2.197; H 1.028 0.594 2.197",
+        "basis": "6-31g",
+        # S–H bond: lone pair + sigma bond active space
+        "ncas": 2, "nelecas": 2,
+        "scan_bond": [0, 2],  # S–H bond
+        "tbi_context": "Models cysteine S–H bond; key target for ROS oxidation in TBI oxidative stress",
+    },
+    "n_methylacetamide": {
+        "name": "N-Methylacetamide (CH₃CONHCH₃) — Peptide bond model",
+        "atom": (
+            "C  0.000  0.000  0.000;"
+            "O  0.000  0.000  1.229;"
+            "N  1.221  0.000 -0.672;"
+            "C  2.395  0.000  0.178;"
+            "C -1.215  0.000 -0.892;"
+            "H  1.227  0.000 -1.690;"
+            "H  2.419  1.028  0.563;"
+            "H  2.419 -1.028  0.563;"
+            "H  3.296  0.000 -0.439;"
+            "H -1.215 -1.028 -1.286;"
+            "H -1.215  1.028 -1.286;"
+            "H -2.132  0.000 -0.301"
+        ),
+        "basis": "6-31g",
+        # C–N peptide bond: pi system active space
+        "ncas": 4, "nelecas": 4,
+        "scan_bond": [0, 2],  # C–N peptide bond
+        "tbi_context": "Peptide bond C–N cleavage model; relevant to mechanical TBI protein fragmentation",
+    },
+    "ethane_cc": {
+        "name": "Ethane (C₂H₆) — C–C mechanical cleavage model",
+        "atom": "C 0.0 0.0 0.765; C 0.0 0.0 -0.765; H 1.019 0.0 1.154; H -0.510 0.882 1.154; H -0.510 -0.882 1.154; H -1.019 0.0 -1.154; H 0.510 0.882 -1.154; H 0.510 -0.882 -1.154",
+        "basis": "6-31g",
+        # C–C sigma bond: bonding + antibonding
+        "ncas": 2, "nelecas": 2,
+        "scan_bond": [0, 1],  # C–C bond
+        "tbi_context": "Models lipid membrane C–C bond homolysis under mechanical TBI shear forces",
+    },
 }
 
 # Cache for MCSCF results keyed by molecule id
 _cached_mcscf: dict = {}
 _cache_lock = threading.Lock()
 
+# ── PES Scan Job Store ─────────────────────────────────────────────────
+_pes_jobs: dict = {}
+_pes_lock = threading.Lock()
+
+
+class PESScanRequest(BaseModel):
+    molecule_id: str
+    atom1: int
+    atom2: int
+    r_min: float
+    r_max: float
+    n_steps: int = 12
+    methods: List[str] = ["rhf", "dft", "casscf"]
+
+
+def _build_atom_string(symbols: list, coords_ang: np.ndarray) -> str:
+    return "; ".join(f"{s} {x:.6f} {y:.6f} {z:.6f}" for s, (x, y, z) in zip(symbols, coords_ang))
+
+
+def _run_pes_scan_blocking(job_id: str, req: PESScanRequest):
+    """CPU-bound PES scan; runs in a BackgroundTasks thread."""
+    try:
+        preset = MOLECULE_PRESETS.get(req.molecule_id)
+        if preset is None:
+            with _pes_lock:
+                _pes_jobs[job_id]["status"] = "error"
+                _pes_jobs[job_id]["error"] = f"Unknown molecule: {req.molecule_id}"
+            return
+
+        mol_ref = gto.M(atom=preset["atom"], basis=preset["basis"], verbose=0)
+        coords_ang = mol_ref.atom_coords(unit="ANG")
+        symbols = [mol_ref.atom_symbol(i) for i in range(mol_ref.natm)]
+
+        if req.atom1 >= mol_ref.natm or req.atom2 >= mol_ref.natm:
+            with _pes_lock:
+                _pes_jobs[job_id]["status"] = "error"
+                _pes_jobs[job_id]["error"] = f"Atom index out of range (molecule has {mol_ref.natm} atoms)"
+            return
+
+        vec = coords_ang[req.atom2] - coords_ang[req.atom1]
+        r0 = float(np.linalg.norm(vec))
+        if r0 < 1e-6:
+            with _pes_lock:
+                _pes_jobs[job_id]["status"] = "error"
+                _pes_jobs[job_id]["error"] = "atom1 and atom2 are at the same position"
+            return
+        unit_vec = vec / r0
+
+        r_values = np.linspace(req.r_min, req.r_max, req.n_steps)
+        methods = [m.lower() for m in req.methods]
+
+        for i, r in enumerate(r_values):
+            new_coords = coords_ang.copy()
+            new_coords[req.atom2] = coords_ang[req.atom1] + r * unit_vec
+            atom_string = _build_atom_string(symbols, new_coords)
+
+            point: dict = {
+                "r": round(float(r), 6),
+                "step": i,
+            }
+
+            try:
+                mol = gto.M(atom=atom_string, basis=preset["basis"], verbose=0)
+                mf_rhf = None
+
+                if "rhf" in methods or "casscf" in methods:
+                    mf_rhf = mol.RHF().run()
+                    point["e_rhf"] = round(float(mf_rhf.e_tot), 10)
+
+                if "dft" in methods:
+                    mf_dft = dft.RKS(mol)
+                    mf_dft.xc = "B3LYP"
+                    mf_dft.run()
+                    point["e_dft"] = round(float(mf_dft.e_tot), 10)
+
+                if "casscf" in methods and mf_rhf is not None:
+                    try:
+                        mc = mcscf.CASSCF(mf_rhf, preset["ncas"], preset["nelecas"]).run()
+                        point["e_casscf"] = round(float(mc.e_tot), 10)
+                        _, _, occ = mcscf.casci.cas_natorb(mc)
+                        point["occupations"] = [round(float(o), 6) for o in occ]
+                    except Exception as e:
+                        point["e_casscf"] = None
+                        point["casscf_error"] = str(e)
+
+            except Exception as e:
+                point["error"] = str(e)
+
+            with _pes_lock:
+                _pes_jobs[job_id]["points"].append(point)
+                _pes_jobs[job_id]["progress"] = round((i + 1) / len(r_values), 4)
+
+        with _pes_lock:
+            _pes_jobs[job_id]["status"] = "complete"
+
+    except Exception as e:
+        with _pes_lock:
+            _pes_jobs[job_id]["status"] = "error"
+            _pes_jobs[job_id]["error"] = str(e)
+
 
 def _compute_molecule(molecule_id: str) -> dict:
-    """Run the MCSCF computation for a molecule (no caching logic)."""
+    """Run RHF + DFT (B3LYP) + CASSCF computation for a molecule (no caching logic)."""
     preset = MOLECULE_PRESETS.get(molecule_id)
     if preset is None:
         raise ValueError(f"Unknown molecule: {molecule_id}")
 
-    logger.info(f"Computing MCSCF for {molecule_id}...")
+    logger.info(f"Computing RHF+DFT+CASSCF for {molecule_id}...")
     mol = gto.M(atom=preset["atom"], basis=preset["basis"], verbose=0)
+
     mf = mol.RHF().run()
+
+    mf_dft = dft.RKS(mol)
+    mf_dft.xc = "B3LYP"
+    mf_dft.run()
+
     mc = mcscf.CASSCF(mf, preset["ncas"], preset["nelecas"]).run()
     natorb_coeff, ci, natorb_occ = mcscf.casci.cas_natorb(mc)
-    logger.info(f"MCSCF for {molecule_id} done (E={mc.e_tot:.6f})")
+
+    logger.info(
+        f"Done {molecule_id}: E_RHF={mf.e_tot:.6f}  E_DFT={mf_dft.e_tot:.6f}"
+        f"  E_CASSCF={mc.e_tot:.6f}"
+    )
     return {
         "mol": mol,
         "mf": mf,
+        "mf_dft": mf_dft,
         "mc": mc,
         "natorbs": natorb_coeff,
         "occupations": natorb_occ,
         "energy": float(mc.e_tot),
         "rhf_energy": float(mf.e_tot),
+        "dft_energy": float(mf_dft.e_tot),
+        "dft_xc": "B3LYP",
         "preset": preset,
     }
 
@@ -289,7 +454,12 @@ async def root():
 async def list_molecules():
     """List all available molecule presets."""
     return [
-        {"id": mid, "name": preset["name"]}
+        {
+            "id": mid,
+            "name": preset["name"],
+            "tbi_context": preset.get("tbi_context"),
+            "scan_bond": preset.get("scan_bond"),
+        }
         for mid, preset in MOLECULE_PRESETS.items()
     ]
 
@@ -464,8 +634,11 @@ async def get_molecule_details(molecule: str = "water"):
     # ── Energies ──
     energies = {
         "rhf_total": round(float(results["rhf_energy"]), 10),
+        "dft_total": round(float(results["dft_energy"]), 10),
+        "dft_xc": results.get("dft_xc", "B3LYP"),
         "casscf_total": round(float(results["energy"]), 10),
         "correlation_energy": round(float(results["energy"]) - float(results["rhf_energy"]), 10),
+        "dft_vs_casscf_diff": round(float(results["dft_energy"]) - float(results["energy"]), 10),
     }
 
     # ── CASSCF details ──
@@ -518,6 +691,51 @@ async def get_molecule_details(molecule: str = "water"):
         "nuclear_repulsion_energy": round(nuc_repulsion, 10),
         "casscf": casscf_info,
         "orbitals": orbital_details,
+    }
+
+
+@app.post("/api/pes_scan")
+async def start_pes_scan(request: PESScanRequest, background_tasks: BackgroundTasks):
+    """
+    Start a potential energy surface scan along a bond stretch.
+
+    Varies the distance between atom1 and atom2 from r_min to r_max (Angstroms),
+    running the requested methods (rhf, dft, casscf) at each geometry.
+    Returns a job_id for polling via GET /api/pes_scan/{job_id}.
+    """
+    job_id = str(uuid.uuid4())[:8]
+    with _pes_lock:
+        _pes_jobs[job_id] = {
+            "status": "running",
+            "points": [],
+            "progress": 0.0,
+            "error": None,
+            "request": request.model_dump(),
+        }
+    background_tasks.add_task(_run_pes_scan_blocking, job_id, request)
+    return {"job_id": job_id, "status": "running"}
+
+
+@app.get("/api/pes_scan/{job_id}")
+async def get_pes_scan(job_id: str):
+    """
+    Poll a PES scan job. Returns current status, progress (0–1), and
+    all completed scan points so far.
+
+    Each point: {r, step, e_rhf?, e_dft?, e_casscf?, occupations?, error?}
+    """
+    with _pes_lock:
+        job = _pes_jobs.get(job_id)
+    if job is None:
+        return Response(content=f"Job {job_id} not found", status_code=404)
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "progress": job["progress"],
+        "n_points_done": len(job["points"]),
+        "points": job["points"],
+        "error": job["error"],
+        "request": job.get("request"),
     }
 
 
