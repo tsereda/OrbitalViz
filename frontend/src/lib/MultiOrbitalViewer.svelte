@@ -4,6 +4,7 @@
   import { onMount } from 'svelte';
   import OrbitalMesh from './OrbitalMesh.svelte';
   import MoleculeAtoms from './MoleculeAtoms.svelte';
+  import EnergyPanel from './EnergyPanel.svelte';
 
   export let apiUrl = 'http://localhost:8000';
 
@@ -29,6 +30,10 @@
   let computeProgress = '';
   let computedCount = 0;
   let computeTotal = 0;
+  let scanOpen = false;  // mobile: open energy panel as modal
+
+  // Derived: scan_bond hint and tbi context for selected molecule
+  $: selectedMoleculeMeta = molecules.find(m => m.id === selectedMolecule) ?? null;
 
   const orbitalColorPairs = [
     { pos: '#4a9eff', neg: '#ff6644' },
@@ -296,7 +301,7 @@
   }
 </script>
 
-<div class="phone-frame">
+<div class="app-frame">
   <!-- Top bar -->
   <header class="top-bar">
     <h1>OrbitalViz</h1>
@@ -311,6 +316,7 @@
         Compute
       </button>
       <button class="details-btn" on:click={openDetails} title="Molecule Details">Details</button>
+      <button class="details-btn scan-btn-mobile" on:click={() => scanOpen = true} title="Bond Energy Scan">Scan</button>
     </div>
   </header>
 
@@ -321,6 +327,10 @@
       <span class="current-mol-meta">{selectedSet.size} orbital{selectedSet.size !== 1 ? 's' : ''} &middot; grid {gridSize}</span>
     </div>
   {/if}
+
+  <!-- Main layout: viewer column + sidebar column -->
+  <div class="main-layout">
+  <div class="viewer-col">
 
   <!-- Loading overlay (computation in progress) -->
   {#if loading}
@@ -429,13 +439,47 @@
         {#if moleculeInfo}
           <div class="ctrl-section info-strip">
             <span>{moleculeInfo.basis}</span>
-            <span>E = {moleculeInfo.energy?.toFixed(4)} Ha</span>
+            <span>CASSCF {moleculeInfo.energy?.toFixed(5)} Ha</span>
             <span>{moleculeInfo.atoms?.map(a => a.element).join(', ')}</span>
           </div>
         {/if}
       </div>
     {/if}
   </div>
+
+  </div><!-- /viewer-col -->
+
+  <!-- Desktop sidebar: energy comparison panel -->
+  <div class="sidebar-col">
+    <EnergyPanel
+      {apiUrl}
+      {selectedMolecule}
+      {moleculeInfo}
+      moleculeMeta={selectedMoleculeMeta}
+    />
+  </div>
+
+  </div><!-- /main-layout -->
+
+  <!-- Mobile scan modal -->
+  {#if scanOpen}
+    <div class="modal-overlay" on:click|self={() => scanOpen = false} on:keydown={e => e.key === 'Escape' && (scanOpen = false)} role="dialog" aria-modal="true">
+      <div class="modal-panel scan-panel">
+        <div class="modal-header">
+          <h2>Bond Energy Scan</h2>
+          <button class="modal-close" on:click={() => scanOpen = false}>✕</button>
+        </div>
+        <div class="modal-body">
+          <EnergyPanel
+            {apiUrl}
+            {selectedMolecule}
+            {moleculeInfo}
+            moleculeMeta={selectedMoleculeMeta}
+          />
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <!-- Computation Panel Modal -->
   {#if computeOpen}
@@ -624,8 +668,12 @@
                 <div class="detail-kv-list">
                   <div class="kv"><span class="k">Nuclear repulsion</span><span class="v mono">{detailsData.nuclear_repulsion_energy.toFixed(8)} Ha</span></div>
                   <div class="kv"><span class="k">RHF total energy</span><span class="v mono">{detailsData.energies.rhf_total.toFixed(8)} Ha</span></div>
-                  <div class="kv"><span class="k">CASSCF total energy</span><span class="v mono">{detailsData.energies.casscf_total.toFixed(8)} Ha</span></div>
-                  <div class="kv"><span class="k">Correlation energy</span><span class="v mono">{detailsData.energies.correlation_energy.toFixed(8)} Ha</span></div>
+                  <div class="kv"><span class="k">DFT ({detailsData.energies.dft_xc ?? 'B3LYP'}) energy</span><span class="v mono" style="color:#ffaa44">{detailsData.energies.dft_total?.toFixed(8) ?? '–'} Ha</span></div>
+                  <div class="kv"><span class="k">CASSCF total energy</span><span class="v mono" style="color:#4a9eff">{detailsData.energies.casscf_total.toFixed(8)} Ha</span></div>
+                  <div class="kv"><span class="k">Correlation energy (CASSCF–RHF)</span><span class="v mono">{detailsData.energies.correlation_energy.toFixed(8)} Ha</span></div>
+                  {#if detailsData.energies.dft_vs_casscf_diff != null}
+                    <div class="kv"><span class="k">DFT vs CASSCF diff</span><span class="v mono" style="color:#ff6644">{(detailsData.energies.dft_vs_casscf_diff * 627.509).toFixed(3)} kcal/mol</span></div>
+                  {/if}
                 </div>
               </div>
             {/if}
@@ -685,7 +733,7 @@
 
 <style>
   /* ── App frame ── */
-  .phone-frame {
+  .app-frame {
     width: 100%;
     height: 100vh;
     height: 100dvh;
@@ -694,8 +742,57 @@
     background: #0d0d0d;
     color: #e0e0e0;
     font-family: -apple-system, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
-    position: relative;
     overflow: hidden;
+  }
+
+  /* ── Two-column layout ── */
+  .main-layout {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+
+  .viewer-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    position: relative;
+  }
+
+  /* Sidebar: hidden on mobile, shown on desktop */
+  .sidebar-col {
+    display: none;
+  }
+
+  @media (min-width: 1024px) {
+    .sidebar-col {
+      display: flex;
+      flex-direction: column;
+      width: 360px;
+      min-width: 320px;
+      border-left: 1px solid #1a1a1a;
+      background: #0b0b0b;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+    .sidebar-col::-webkit-scrollbar { width: 3px; }
+    .sidebar-col::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
+    /* Hide mobile scan button on desktop */
+    .scan-btn-mobile { display: none; }
+  }
+
+  /* On mobile, scan-btn-mobile is visible */
+  .scan-btn-mobile { display: inline-flex; }
+
+  @media (min-width: 1024px) {
+    .scan-btn-mobile { display: none !important; }
+  }
+
+  /* Scan panel modal size */
+  .scan-panel {
+    max-height: 95vh;
+    max-height: 95dvh;
   }
 
   /* ── Top bar ── */
